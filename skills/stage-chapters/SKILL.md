@@ -6,7 +6,7 @@ user-invocable: true
 
 # stage-chapters
 
-Generates a Stage chapter run for the current local git branch and opens it in a browser. The skill detects the base ref, computes the diff, generates chapters from it, writes a JSON file matching the `stagereview` schema, and hands the file to `stagereview show` to launch the SPA.
+Generates a Stage chapter run for the current local git branch and opens it in a browser. Uses `stagereview prep` to compute the diff, then generates chapters and a prologue, and hands the result to `stagereview show` to launch the SPA.
 
 ## Prerequisites
 
@@ -30,46 +30,52 @@ Run these checks before any other work. If either fails, stop with the error mes
    /stage-chapters must be run inside a git repository.
    ```
 
-## Step 1 — Detect base ref
-
-Find the branch the user reviews against. Try each of the following in order; the first that succeeds becomes `<base>`:
-
-1. `git rev-parse --abbrev-ref origin/HEAD 2>/dev/null` — typically prints `origin/main`. Use the full output (e.g. `origin/main`) as `<base>`; do **not** strip `origin/`, because the bare name (`main`) may not exist locally in single-branch clones.
-2. `git rev-parse --verify main 2>/dev/null` — local `main` branch; use `main` as `<base>`.
-3. `git rev-parse --verify master 2>/dev/null` — older repos; use `master` as `<base>`.
-4. `git rev-parse --verify origin/main 2>/dev/null` — remote-tracking fallback when `origin/HEAD` is unset; use `origin/main` as `<base>`.
-5. `git rev-parse --verify origin/master 2>/dev/null` — remote-tracking fallback for older repos; use `origin/master` as `<base>`.
-
-If all five fail, stop with:
-
-```
-No default branch detected. Tried origin/HEAD, main, master, origin/main, and origin/master.
-```
-
-`<base>` is whatever ref expression was verified above and is passed verbatim to `git merge-base` / `git rev-parse` in Step 2.
-
-## Step 2 — Get the diff
-
-Compute the merge-base and dump the unified diff for the committed range only:
+## Step 1 — Run prep
 
 ```bash
-MERGE_BASE=$(git merge-base <base> HEAD)
-HEAD_SHA=$(git rev-parse HEAD)
-
-git diff "$MERGE_BASE..HEAD"
+PREP_FILE=$(stagereview prep)
 ```
 
-If `git merge-base` exits non-zero or `MERGE_BASE` is empty, stop with an error like `Could not compute merge-base between <base> and HEAD (unrelated histories or shallow clone).` Do **not** continue — running `git diff "..HEAD"` with an empty `MERGE_BASE` produces an empty diff that would silently yield zero chapters.
+`stagereview prep` auto-detects the base ref (main/master), computes the merge-base, generates the diff (including uncommitted and untracked changes when present), filters out lockfiles/binaries, and formats hunks with line numbers for analysis. It writes a plain-text file and prints only the file path to stdout.
 
-`git diff <merge-base>..HEAD` covers exactly the commits on the branch since it diverged from the base — the same range the SPA renders for a `committed` run (`baseSha..headSha` in `packages/cli/src/routes/diff.ts`). Save the full diff text into context for Step 3.
+If the user specifies a base branch (e.g., "generate chapters against `feature-a`"), pass `--base <ref>` to both `prep` and `show`:
 
-This skill scopes review to *committed* work. If the user has uncommitted changes to tracked files, instruct them to commit first; mixing committed and working-tree changes into a single run would produce `hunkRefs`/`lineRefs` that don't line up with the diff the SPA serves.
+```bash
+PREP_FILE=$(stagereview prep --base feature-a)
+# ... later ...
+stagereview show --base feature-a "$AGENT_OUTPUT"
+```
 
-`MERGE_BASE` and `HEAD_SHA` are full 40-character SHAs that feed directly into the JSON `scope` field in Step 4.
+If `prep` exits non-zero, relay its stderr to the user and stop.
+
+**Do not modify files in the working tree between running `prep` and running `show`.** Both commands independently snapshot the git state. If the diff changes between them, `show` will reject the chapters with a hunk coverage error because the hunks no longer match.
+
+## Step 2 — Read prep output
+
+Read `$PREP_FILE` via the Read tool (or equivalent). For large diffs, use the Read tool's `offset` and `limit` parameters to read in chunks.
+
+The file has two sections separated by headers:
+
+1. **`=== COMMIT MESSAGES ===`** — `git log --oneline` output for prologue context.
+2. **`=== HUNKS ===`** — formatted diff hunks with line numbers. Each hunk looks like:
+
+```
+=== File: src/app.ts (modified) | filePath: "src/app.ts", oldStart: 1 ===
+=== Hunk @1: @@ -1,5 +1,6 @@ ===
+1 1 | const a = 1;
+2   |-const b = 2;
+  2 |+const b = 3;
+  3 |+const c = 4;
+3 4 | const d = 5;
+```
+
+The two number columns are the **old line number** (left) and **new line number** (right). A blank column means the line doesn't exist on that side — additions have no old line number, deletions have no new line number. These numbers are used directly for `lineRefs` in key changes (see Step 3d).
+
+`commits.txt` contains `git log --oneline` output for prologue context.
 
 ## Step 3 — Cluster + narrate
 
-Using the full diff from Step 2, produce a `chapters` array. Each chapter groups related hunks into a coherent story beat, narrates them for a reviewer unfamiliar with this part of the codebase, and flags judgment calls that need human input.
+Using the hunks from `hunks.txt`, produce a `chapters` array. Each chapter groups related hunks into a coherent story beat, narrates them for a reviewer unfamiliar with this part of the codebase, and flags judgment calls that need human input.
 
 ### 3a — Clustering rules
 
@@ -96,16 +102,16 @@ Consider symbol dependencies between chapters — a chapter that introduces a ty
 
 ### 3b — Self-validation rules
 
-Every hunk in the diff **must** appear in exactly one chapter. No hunk may be omitted and no hunk may appear in more than one chapter.
+Every hunk in the formatted diff **must** appear in exactly one chapter. No hunk may be omitted and no hunk may appear in more than one chapter.
 
-Identify each hunk by its exact `(filePath, oldStart)` tuple from the unified-diff `@@ -X,Y +A,B @@` header. Use the EXACT `oldStart` value from the `@@` header — do not recount lines yourself.
+Each hunk header in the prep output has the format:
+```
+=== File: <path> (<status>) | filePath: "<path>", oldStart: <N> ===
+```
 
-- `filePath` is the path after `b/` in the `diff --git a/... b/...` line.
-- `oldStart` is the `X` in `@@ -X,Y +A,B @@`. For newly created files the header is `@@ -0,0 +1,N @@`, so `oldStart` is `0`.
+Use the `filePath` and `oldStart` values from these headers to build `hunkRefs`.
 
-After building the chapters array, verify:
-1. The total number of `hunkRefs` across all chapters equals the total number of `@@` headers in the diff.
-2. Every `(filePath, oldStart)` pair from the diff appears in exactly one chapter's `hunkRefs`.
+`stagereview show` validates hunk coverage automatically — it will error with a list of missing or extra hunks if the chapters don't account for every hunk in the diff. If this happens, fix the chapters and retry.
 
 ### 3c — Narration rules
 
@@ -126,10 +132,12 @@ Frame each item as a **question**.
 
 Each key change includes `lineRefs`: one line range per distinct spot the question depends on. Most questions touch a single location, so use one range; only add more when the judgment genuinely spans related code in different places.
 
-- Use OLD-column line numbers for `side: "deletions"` (left side of the diff).
-- Use NEW-column line numbers for `side: "additions"` (right side of the diff).
-- Keep ranges tight — point to the specific lines the question is about, not the entire hunk.
-- `startLine` and `endLine` must both be positive integers with `endLine >= startLine`.
+**Reading line numbers from `hunks.txt`:** Each diff line shows two number columns — old (left) and new (right). Use these numbers directly:
+- For `side: "deletions"` — use the **old** (left) column number as `startLine`/`endLine`.
+- For `side: "additions"` — use the **new** (right) column number as `startLine`/`endLine`.
+- Do **not** count lines yourself — read the numbers from the formatted output.
+
+Keep ranges tight — point to the specific lines the question is about, not the entire hunk. `startLine` and `endLine` must both be positive integers with `endLine >= startLine`.
 
 **Good examples:**
 
@@ -174,18 +182,14 @@ Produce an array of chapter objects. Each chapter:
 }
 ```
 
-- Do **not** invent `hunkRefs` — only use `(filePath, oldStart)` tuples that actually appear in the diff's `@@` headers.
+- Do **not** invent `hunkRefs` — only use `(filePath, oldStart)` tuples that actually appear in the formatted hunks.
 - `keyChanges[].lineRefs` must have at least one entry per key change.
 
 ## Step 4 — Generate prologue
 
 After building the chapters, generate a **prologue** — a high-level overview of the entire change. The prologue helps reviewers orient themselves before diving into individual chapters.
 
-Read the commit messages for context:
-
-```bash
-git log --oneline "$MERGE_BASE..HEAD"
-```
+Use `commits.txt` from the prep output for context.
 
 Using the diff, chapters, and commit messages, produce a `prologue` object with the following fields:
 
@@ -236,99 +240,29 @@ Object with:
 
 Talk like a coworker, not a changelog. No jargon, no filler phrases, no "this change introduces/implements/adds". Just say what happened and why it matters.
 
-## Step 5 — Write JSON file
+## Step 5 — Write agent output
 
-Compute a unique temp path. The trailing `XXXXXX` (with no suffix after) is required by macOS BSD `mktemp` — placing characters after the X's causes BSD `mktemp` to return the template verbatim instead of substituting random characters:
+Compute a unique temp path and write the JSON via a bash heredoc:
 
 ```bash
-TMPFILE=$(mktemp "${TMPDIR:-/tmp}/stage-chapters.XXXXXX")
-```
-
-`stagereview show` reads JSON regardless of file extension, so the missing `.json` suffix is fine.
-
-The `${TMPDIR:-/tmp}` fallback matters on macOS, where `os.tmpdir()` resolves to `/var/folders/...` but `$TMPDIR` is not always set in every shell. Avoid `date +%s%N` — the `%N` (nanoseconds) format is a GNU extension and on macOS BSD `date` it emits a literal `N`, breaking uniqueness.
-
-Write a JSON file at `"$TMPFILE"` matching the shape below. The file must validate against `ChaptersFileSchema` in `packages/cli/src/schema.ts`; mismatched fields will be rejected by `stagereview show`.
-
-High-level shape:
-
-```
-{ scope: {...}, chapters: [...], prologue: {...}, generatedAt: "..." }
-```
-
-Full example:
-
-```jsonc
+AGENT_OUTPUT=$(mktemp "${TMPDIR:-/tmp}/stage-agent-output.XXXXXX")
+cat > "$AGENT_OUTPUT" << 'AGENT_EOF'
 {
-  "scope": {
-    "kind": "committed",
-    // Set baseSha = mergeBaseSha = $MERGE_BASE so the SPA renders
-    // baseSha..headSha — the same range chapters were generated from.
-    "baseSha": "<MERGE_BASE>",
-    "headSha": "<HEAD_SHA>",
-    "mergeBaseSha": "<MERGE_BASE>"
-  },
-  "chapters": [
-    {
-      "id": "ch-1",
-      "order": 1,
-      "title": "Short imperative title",
-      "summary": "Why this chapter matters to the reviewer.",
-      "hunkRefs": [
-        { "filePath": "path/to/file.ts", "oldStart": 42 }
-      ],
-      "keyChanges": [
-        {
-          "content": "A judgment-call question for the reviewer (not source code).",
-          "lineRefs": [
-            {
-              "filePath": "path/to/file.ts",
-              "side": "additions",
-              "startLine": 50,
-              "endLine": 55
-            }
-          ]
-        }
-      ]
-    }
-  ],
-  "prologue": {
-    "motivation": "What was broken or annoying, in plain English (or null).",
-    "outcome": "What's better now, in plain English (or null).",
-    "keyChanges": [
-      {
-        "summary": "Outcome-focused summary, 6-10 words",
-        "description": "Capitalized sentence, 10-15 words of context"
-      }
-    ],
-    "focusAreas": [
-      {
-        "type": "architecture",
-        "severity": "info",
-        "title": "3-5 word noun phrase",
-        "description": "WHY flagged + action for the reviewer",
-        "locations": ["path/to/file.ts"]
-      }
-    ],
-    "complexity": {
-      "level": "medium",
-      "reasoning": "Brief explanation"
-    }
-  },
-  "generatedAt": "2026-05-04T12:34:56.000Z"
+  "chapters": [ ... ],
+  "prologue": { ... }
 }
+AGENT_EOF
 ```
+
+The trailing `XXXXXX` (with no suffix after) is required by macOS BSD `mktemp`. Using `cat` with a heredoc avoids tool-specific file-writing issues.
 
 Field rules:
 
 | Field | Constraint |
 |-------|------------|
-| `scope.kind` | `"committed"` or `"workingTree"` |
-| `scope.ref` | Required when `kind` is `"workingTree"`; one of `"work"`, `"staged"`, `"unstaged"` |
-| `scope.baseSha` / `headSha` / `mergeBaseSha` | Full 40-character lowercase hex SHAs |
 | `chapters[].id` | Non-empty, unique within the run |
 | `chapters[].order` | Positive integer (1-indexed) |
-| `chapters[].hunkRefs[].oldStart` | Non-negative integer — the pre-image start line from the unified-diff `@@` header (`0` for new files) |
+| `chapters[].hunkRefs[].oldStart` | Non-negative integer — the pre-image start line from the `oldStart` in the formatted hunk header (`0` for new files) |
 | `chapters[].keyChanges[].lineRefs` | Array with at least one entry |
 | `lineRefs[].side` | `"additions"` (right side) or `"deletions"` (left side) |
 | `lineRefs[].startLine` / `endLine` | Positive integers; `endLine >= startLine` |
@@ -340,16 +274,15 @@ Field rules:
 | `prologue.focusAreas[].type` | One of: `security`, `breaking-change`, `high-complexity`, `data-integrity`, `new-pattern`, `architecture`, `performance`, `testing-gap` |
 | `prologue.focusAreas[].severity` | One of: `critical`, `high`, `medium`, `info` |
 | `prologue.complexity.level` | One of: `low`, `medium`, `high`, `very-high` |
-| `generatedAt` | ISO 8601 datetime string |
 
 ## Step 6 — Display generated chapters
 
 Hand the file to `stagereview`:
 
 ```bash
-stagereview show "$TMPFILE"
+stagereview show "$AGENT_OUTPUT"
 ```
 
-`stagereview show` validates the JSON, inserts a new `chapter_run` plus chapters and key changes into the local SQLite database, boots a loopback HTTP server, and opens the browser to the new run. The command stays running and serves the SPA until the user kills it with Ctrl+C — invoke it as the final command in the workflow rather than expecting it to print a value and exit.
+`stagereview show` auto-detects the agent output format, independently computes the scope and "Other changes" chapter for filtered files, validates the JSON, inserts the run into the local SQLite database, boots a loopback HTTP server, and opens the browser.
 
-Do not pass a `runId` and do not call a separate `stagereview ingest`. `show <path>` does ingestion and serving in one step.
+**The command blocks until the user presses Ctrl+C.** If your harness requires non-blocking execution, run it in the background (e.g., `run_in_background` in Claude Code). Invoke it as the final command in the workflow.
