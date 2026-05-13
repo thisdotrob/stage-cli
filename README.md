@@ -1,18 +1,29 @@
 <div align="center">
   <img src="https://raw.githubusercontent.com/ReviewStage/stage-cli/main/assets/stage-mark.svg" alt="Stage" height="80">
   <h1>Stage</h1>
-  <p>AI-powered code review tool that organizes local code changes into logical chapters and points out what to review before you dive into the code.</p>
+  <p>A code review tool that organizes local code changes into logical chapters and points out what to review before you dive into the code.</p>
+  <p>If you like this, try out the full Stage experience on our website below!</p>
 </div>
+
+<p align="center">
+  <a href="https://stagereview.app">Website</a>
+  &nbsp;&nbsp;•&nbsp;&nbsp;
+  <a href="https://stagereview.app/explore">Examples</a>
+  &nbsp;&nbsp;•&nbsp;&nbsp;
+  <a href="https://stagereview.app/blog">Blog</a>
+  &nbsp;&nbsp;•&nbsp;&nbsp;
+  <a href="https://x.com/StageReviewApp">Twitter</a>
+  &nbsp;&nbsp;•&nbsp;&nbsp;
+  <a href="https://discord.gg/Hs7Eexp3">Discord</a>
+  &nbsp;&nbsp;•&nbsp;&nbsp;
+  <a href="https://stagereview.app/about">About Us</a>
+</p>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/stagereview"><img src="https://img.shields.io/npm/v/stagereview.svg" alt="npm version"></a>
   <a href="https://www.npmjs.com/package/stagereview"><img src="https://img.shields.io/npm/dm/stagereview.svg" alt="npm downloads"></a>
   <a href="https://github.com/ReviewStage/stage-cli/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/stagereview.svg" alt="license"></a>
 </p>
-
----
-
-Try the full Stage experience with GitHub integration at [stagereview.app](https://stagereview.app).
 
 ## Install
 
