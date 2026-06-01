@@ -1,7 +1,11 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import type { Hunk, PullRequestFile } from "@stagereview/types/parsed-diff";
 import { LINE_TYPE } from "@stagereview/types/parsed-diff";
+import ignore from "ignore";
 import { describe, expect, it } from "vitest";
-import { filterFilesForLlm, shouldIncludeFile } from "../filter-files.js";
+import { filterFilesForLlm, loadStageIgnore, shouldIncludeFile } from "../filter-files.js";
 
 function makeHunk(lineCount: number, overrides?: Partial<Hunk>): Hunk {
 	return {
@@ -30,6 +34,10 @@ function makeFile(overrides?: Partial<PullRequestFile>): PullRequestFile {
 		patch: "diff --git ...",
 		...overrides,
 	};
+}
+
+function ig(patterns: string[]) {
+	return ignore().add(patterns);
 }
 
 describe("shouldIncludeFile", () => {
@@ -133,5 +141,143 @@ describe("filterFilesForLlm", () => {
 		]);
 		expect(result.files).toEqual([]);
 		expect(result.excludedByPath).toEqual(["pnpm-lock.yaml", "yarn.lock"]);
+	});
+
+	it("excludes files matching .stageignore patterns", () => {
+		const files = [
+			makeFile({ path: "src/app.ts" }),
+			makeFile({ path: "build/config.gypi" }),
+			makeFile({ path: "dist/bundle.js" }),
+		];
+		const result = filterFilesForLlm(files, ig(["build/**", "dist/**"]));
+		expect(result.files).toHaveLength(1);
+		expect(result.files[0]?.path).toBe("src/app.ts");
+		expect(result.excludedByPath).toEqual(["build/config.gypi", "dist/bundle.js"]);
+	});
+
+	it("combines built-in denylist with .stageignore patterns", () => {
+		const files = [
+			makeFile({ path: "src/app.ts" }),
+			makeFile({ path: "pnpm-lock.yaml" }),
+			makeFile({ path: "generated/schema.ts" }),
+		];
+		const result = filterFilesForLlm(files, ig(["generated/**"]));
+		expect(result.files).toHaveLength(1);
+		expect(result.files[0]?.path).toBe("src/app.ts");
+		expect(result.excludedByPath).toEqual(["pnpm-lock.yaml", "generated/schema.ts"]);
+	});
+
+	it("works normally when stageIgnore is undefined", () => {
+		const files = [makeFile({ path: "src/app.ts" }), makeFile({ path: "pnpm-lock.yaml" })];
+		const result = filterFilesForLlm(files, undefined);
+		expect(result.files).toHaveLength(1);
+		expect(result.files[0]?.path).toBe("src/app.ts");
+	});
+
+	it("works normally when stageIgnore is null", () => {
+		const files = [makeFile({ path: "src/app.ts" }), makeFile({ path: "src/utils.ts" })];
+		const result = filterFilesForLlm(files, null);
+		expect(result.files).toHaveLength(2);
+	});
+
+	it("slashless globs match nested paths", () => {
+		const files = [
+			makeFile({ path: "src/app.ts" }),
+			makeFile({ path: "src/schema.generated.ts" }),
+			makeFile({ path: "lib/deep/nested/types.generated.ts" }),
+		];
+		const result = filterFilesForLlm(files, ig(["*.generated.ts"]));
+		expect(result.files).toHaveLength(1);
+		expect(result.files[0]?.path).toBe("src/app.ts");
+	});
+
+	it("negation re-includes a previously excluded file", () => {
+		const files = [
+			makeFile({ path: "build/output.js" }),
+			makeFile({ path: "build/important.js" }),
+			makeFile({ path: "src/app.ts" }),
+		];
+		const result = filterFilesForLlm(files, ig(["build/**", "!build/important.js"]));
+		expect(result.files).toHaveLength(2);
+		expect(result.files.map((f) => f.path)).toEqual(["build/important.js", "src/app.ts"]);
+	});
+
+	it("last matching pattern wins with negation", () => {
+		const files = [makeFile({ path: "dist/bundle.js" })];
+		const result = filterFilesForLlm(files, ig(["dist/**", "!dist/bundle.js", "*.js"]));
+		expect(result.files).toHaveLength(0);
+	});
+
+	it("leading slash anchors a pattern to the repo root", () => {
+		const files = [makeFile({ path: "dist/bundle.js" }), makeFile({ path: "src/app.ts" })];
+		const result = filterFilesForLlm(files, ig(["/dist/**"]));
+		expect(result.files).toHaveLength(1);
+		expect(result.files[0]?.path).toBe("src/app.ts");
+	});
+
+	it("root-anchored pattern does not match nested paths", () => {
+		const files = [makeFile({ path: "foo/bar.js" }), makeFile({ path: "src/foo/bar.js" })];
+		const result = filterFilesForLlm(files, ig(["/foo/**"]));
+		expect(result.files).toHaveLength(1);
+		expect(result.files[0]?.path).toBe("src/foo/bar.js");
+	});
+
+	it("trailing slash matches directory contents", () => {
+		const files = [makeFile({ path: "build/output.js" }), makeFile({ path: "src/app.ts" })];
+		const result = filterFilesForLlm(files, ig(["build/"]));
+		expect(result.files).toHaveLength(1);
+		expect(result.files[0]?.path).toBe("src/app.ts");
+	});
+
+	it("negation with slashless pattern re-includes nested files", () => {
+		const files = [
+			makeFile({ path: "generated/schema.ts" }),
+			makeFile({ path: "generated/keep-this.ts" }),
+		];
+		const result = filterFilesForLlm(files, ig(["generated/**", "!keep-this.ts"]));
+		expect(result.files).toHaveLength(1);
+		expect(result.files[0]?.path).toBe("generated/keep-this.ts");
+	});
+});
+
+describe("loadStageIgnore", () => {
+	function makeTempDir(): string {
+		return mkdtempSync(path.join(tmpdir(), "stage-test-"));
+	}
+
+	it("returns null when .stageignore does not exist", () => {
+		const dir = makeTempDir();
+		expect(loadStageIgnore(dir)).toBeNull();
+	});
+
+	it("parses patterns from .stageignore", () => {
+		const dir = makeTempDir();
+		writeFileSync(path.join(dir, ".stageignore"), "build/**\ndist/**\n");
+		const matcher = loadStageIgnore(dir);
+		expect(matcher).not.toBeNull();
+		expect(matcher?.ignores("build/config.gypi")).toBe(true);
+		expect(matcher?.ignores("dist/bundle.js")).toBe(true);
+		expect(matcher?.ignores("src/app.ts")).toBe(false);
+	});
+
+	it("ignores comments and blank lines", () => {
+		const dir = makeTempDir();
+		writeFileSync(
+			path.join(dir, ".stageignore"),
+			"# Build artifacts\nbuild/**\n\n# Output\ndist/**\n\n",
+		);
+		const matcher = loadStageIgnore(dir);
+		expect(matcher?.ignores("build/config.gypi")).toBe(true);
+		expect(matcher?.ignores("dist/bundle.js")).toBe(true);
+		expect(matcher?.ignores("src/app.ts")).toBe(false);
+	});
+
+	it("empty .stageignore matches nothing", () => {
+		const dir = makeTempDir();
+		writeFileSync(path.join(dir, ".stageignore"), "");
+		const matcher = loadStageIgnore(dir);
+		expect(matcher).not.toBeNull();
+		expect(matcher?.ignores("src/app.ts")).toBe(false);
+		expect(matcher?.ignores("build/anything.js")).toBe(false);
 	});
 });

@@ -77,6 +77,24 @@ Examples:
 /stage-chapters --base main --compare feature
 ```
 
+### `.stageignore`
+
+Add a `.stageignore` file to your repo root to exclude files from the diff analysis. Uses `.gitignore`-style patterns, one per line:
+
+```
+# Build artifacts
+build/**
+dist/**
+
+# Generated code
+*.generated.ts
+
+# But keep this one
+!dist/important.js
+```
+
+Ignored files still appear in the "Other changes" chapter so nothing is silently hidden. Comments (`#`), blank lines, and negation patterns (`!`) are supported — last matching pattern wins.
+
 <img width="1840" height="1196" alt="Stage CLI" src="https://raw.githubusercontent.com/ReviewStage/stage-cli/main/assets/screenshot.png" />
 
 ## License
