@@ -1,5 +1,7 @@
 import { type ComponentPropsWithoutRef, memo } from "react";
 import ReactMarkdown from "react-markdown";
+import rehypeRaw from "rehype-raw";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
 
@@ -8,7 +10,28 @@ interface MarkdownProps {
 	className?: string;
 	/** When true, descendants inherit font-size and line-height from the parent. */
 	inheritSize?: boolean;
+	/**
+	 * Render embedded raw HTML (sanitized). Off by default so plain markdown stays
+	 * HTML-free; enable for GitHub-sourced content like PR descriptions, whose bodies
+	 * commonly contain HTML badge blocks (`<picture>`/`<img>` from bots).
+	 */
+	allowHtml?: boolean;
 }
+
+// Extend rehype-sanitize's GitHub schema to keep the `<picture>`/`<source>` image
+// badges GitHub renders in PR bodies, while still stripping scripts/handlers.
+// `target`/`rel` are deliberately NOT allowed through: the `a` renderer below
+// forces target="_blank" rel="noopener noreferrer", so letting a raw link's own
+// rel/target survive sanitization could only weaken that (e.g. rel="opener").
+const htmlSchema = {
+	...defaultSchema,
+	tagNames: [...(defaultSchema.tagNames ?? []), "picture", "source"],
+	attributes: {
+		...defaultSchema.attributes,
+		source: ["srcSet", "media", "type", "sizes"],
+		img: [...(defaultSchema.attributes?.img ?? []), "width", "height", "loading"],
+	},
+};
 
 const code = ({ className, ...props }: ComponentPropsWithoutRef<"code">) => (
 	<code
@@ -68,9 +91,13 @@ const blockquote = ({ className, ...props }: ComponentPropsWithoutRef<"blockquot
 	/>
 );
 
-const components = { code, pre, a, p, ul, ol, li, blockquote };
+const img = ({ className, alt, ...props }: ComponentPropsWithoutRef<"img">) => (
+	<img className={cn("inline-block max-w-full rounded", className)} alt={alt ?? ""} {...props} />
+);
 
-function MarkdownImpl({ content, className, inheritSize }: MarkdownProps) {
+const components = { code, pre, a, p, ul, ol, li, blockquote, img };
+
+function MarkdownImpl({ content, className, inheritSize, allowHtml }: MarkdownProps) {
 	return (
 		<div
 			className={cn(
@@ -78,7 +105,11 @@ function MarkdownImpl({ content, className, inheritSize }: MarkdownProps) {
 				className,
 			)}
 		>
-			<ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+			<ReactMarkdown
+				remarkPlugins={[remarkGfm]}
+				rehypePlugins={allowHtml ? [rehypeRaw, [rehypeSanitize, htmlSchema]] : undefined}
+				components={components}
+			>
 				{content}
 			</ReactMarkdown>
 		</div>

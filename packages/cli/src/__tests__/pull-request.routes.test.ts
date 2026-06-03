@@ -29,6 +29,7 @@ const GITHUB_ORIGIN = "git@github.com:owner/repo.git";
 const PR_JSON = JSON.stringify({
 	number: 7,
 	title: "Add the thing",
+	body: "This PR adds the thing.\n\nDetails here.",
 	url: "https://github.com/owner/repo/pull/7",
 	state: "OPEN",
 	isDraft: false,
@@ -263,6 +264,7 @@ describe("pull-request API", () => {
 		expect(pullRequest).toEqual({
 			number: 7,
 			title: "Add the thing",
+			body: "This PR adds the thing.\n\nDetails here.",
 			html_url: "https://github.com/owner/repo/pull/7",
 			state: "open",
 			draft: false,
@@ -277,6 +279,16 @@ describe("pull-request API", () => {
 			head: { ref: "feature", sha: SHA },
 			base: { ref: "main" },
 		});
+	});
+
+	it("coerces a null gh body to an empty string instead of dropping the PR", async () => {
+		const prNoBody = JSON.stringify({ ...JSON.parse(PR_JSON), body: null });
+		await writeFakeGh({ pr: prNoBody, restPr: REST_PR_JSON });
+		const runId = insertRun(GITHUB_ORIGIN);
+		const res = await request(await start(), `/api/runs/${runId}/pull-request`);
+		expect(res.status).toBe(200);
+		const { pullRequest } = JSON.parse(res.body) as PullRequestResponse;
+		expect(pullRequest?.body).toBe("");
 	});
 
 	it("returns null when gh finds no PR for the branch", async () => {
