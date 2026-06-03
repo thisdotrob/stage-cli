@@ -1,29 +1,23 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useHotkeys } from "react-hotkeys-hook";
-import {
-	FileDiffList,
-	type FileDiffListHandle,
-	FilePicker,
-	SidebarLayout,
-} from "@/components/files";
+import { useCallback, useMemo } from "react";
+import { FileDiffList, FilePicker, SidebarLayout, type ViewedConfig } from "@/components/files";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useProvideCollapseActions } from "@/lib/collapse-actions-context";
-import { FILE_STATUS } from "@/lib/diff-types";
+import { FILE_STATUS, FILE_VIEWED_STATE } from "@/lib/diff-types";
 import { buildFileTree, flattenFileTree, sortFileTree } from "@/lib/file-tree";
-import { KEYBOARD_SHORTCUTS } from "@/lib/keyboard-shortcuts";
 import { type FileDiffEntry, useFileDiffEntries } from "@/lib/parse-diff";
-import { useActiveFileOnScroll } from "@/lib/use-active-file-on-scroll";
 import { useDiffPatch } from "@/lib/use-diff-patch";
 import { useFileCollapseState } from "@/lib/use-file-collapse-state";
-import { useFileNavigationKeys } from "@/lib/use-file-navigation-keys";
+import { useFileDiffNavigation } from "@/lib/use-file-diff-navigation";
 import { useViewState } from "@/lib/use-view-state";
+
+// The CLI has no review comments, so the file tree never renders comment badges.
+const NO_COMMENT_COUNTS: Map<string, number> = new Map();
 
 interface FilesPageProps {
 	runId: string;
-	scrollTo?: string;
 }
 
-export function FilesPage({ runId, scrollTo }: FilesPageProps) {
+export function FilesPage({ runId }: FilesPageProps) {
 	const { data: diffData, isLoading, error } = useDiffPatch(runId);
 
 	const rawEntries = useFileDiffEntries(diffData?.patch, diffData?.fileContents);
@@ -39,14 +33,17 @@ export function FilesPage({ runId, scrollTo }: FilesPageProps) {
 		[filePathSet, markFileViewed, unmarkFileViewed],
 	);
 
-	// Deleted and viewed files start collapsed; useFileCollapseState lets the
-	// user override per-file while keeping these defaults reactive.
+	// Deleted and already-viewed files start collapsed; useFileCollapseState lets
+	// the user override per-file while keeping these defaults reactive. Scoped to
+	// the current files (a viewed path may linger in view-state for a file no
+	// longer in the diff) so collapsedFiles stays a subset of files.
 	const defaultCollapsedFileIds = useMemo(() => {
 		const ids = new Set<string>();
 		for (const file of files) {
-			if (file.status === FILE_STATUS.DELETED) ids.add(file.path);
+			if (file.status === FILE_STATUS.DELETED || filePathSet.has(file.path)) {
+				ids.add(file.path);
+			}
 		}
-		for (const path of filePathSet) ids.add(path);
 		return ids;
 	}, [files, filePathSet]);
 
@@ -54,29 +51,25 @@ export function FilesPage({ runId, scrollTo }: FilesPageProps) {
 	const collapseState = useFileCollapseState(defaultCollapsedFileIds, filePaths, runId);
 	useProvideCollapseActions(collapseState, filePaths.length);
 
-	const diffListRef = useRef<FileDiffListHandle>(null);
-	const { activeFilePath, setActiveFileManually } = useActiveFileOnScroll(files);
+	const { diffListRef, currentFilePath, keyboardFocusedFilePath, handleSelectFile } =
+		useFileDiffNavigation({
+			files,
+			onToggleViewed: handleToggleViewed,
+			collapse: collapseState,
+		});
 
-	const handleSelectFile = useCallback(
-		(filePath: string) => {
-			setActiveFileManually(filePath);
-			diffListRef.current?.scrollToFile(filePath);
-		},
-		[setActiveFileManually],
+	const viewed = useMemo<ViewedConfig>(
+		() => ({
+			stateByPath: new Map(
+				files.map((file) => [
+					file.path,
+					filePathSet.has(file.path) ? FILE_VIEWED_STATE.VIEWED : FILE_VIEWED_STATE.UNVIEWED,
+				]),
+			),
+			onToggle: handleToggleViewed,
+		}),
+		[files, filePathSet, handleToggleViewed],
 	);
-
-	useEffect(() => {
-		if (scrollTo && !isLoading) {
-			diffListRef.current?.scrollToFile(scrollTo);
-		}
-	}, [scrollTo, isLoading]);
-
-	const [isPickerCollapsed, setIsPickerCollapsed] = useState(false);
-	useHotkeys(KEYBOARD_SHORTCUTS.TOGGLE_FILES.hotkey, () => setIsPickerCollapsed((c) => !c), {
-		preventDefault: true,
-		enableOnFormTags: false,
-	});
-	useFileNavigationKeys(files, activeFilePath, handleSelectFile);
 
 	if (error) return <FilesPageError error={error} />;
 	if (isLoading || diffData === undefined) return <FilesPageSkeleton />;
@@ -86,11 +79,10 @@ export function FilesPage({ runId, scrollTo }: FilesPageProps) {
 			sidebar={
 				<FilePicker
 					files={files}
-					activeFilePath={activeFilePath}
-					viewedPathSet={filePathSet}
+					focusedFilePath={currentFilePath}
+					viewed={viewed}
+					commentCountsByPath={NO_COMMENT_COUNTS}
 					onSelectFile={handleSelectFile}
-					isCollapsed={isPickerCollapsed}
-					onCollapsedChange={setIsPickerCollapsed}
 				/>
 			}
 		>
@@ -101,6 +93,7 @@ export function FilesPage({ runId, scrollTo }: FilesPageProps) {
 				viewedPathSet={filePathSet}
 				onToggleViewed={handleToggleViewed}
 				collapseState={collapseState}
+				focusedFilePath={keyboardFocusedFilePath}
 			/>
 		</SidebarLayout>
 	);
