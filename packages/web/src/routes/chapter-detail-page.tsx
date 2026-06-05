@@ -1,15 +1,24 @@
+import type { SelectedLineRange } from "@pierre/diffs";
 import type { Chapter, LineRef } from "@stagereview/types/chapters";
 import type { FileContentsMap } from "@stagereview/types/diff";
+import type { FeedbackComment } from "@stagereview/types/feedback";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useHotkeys } from "react-hotkeys-hook";
 import { ChapterSidePanel } from "@/components/chapter";
+import { FeedbackComposerDialog, type FeedbackComposerState } from "@/components/feedback";
 import { type ChapterOverlayProps, FileDiffList, SidebarLayout } from "@/components/files";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "@/components/ui/sonner";
 import { useChapterContext } from "@/lib/chapter-context";
 import { useProvideCollapseActions } from "@/lib/collapse-actions-context";
 import { FILE_STATUS } from "@/lib/diff-types";
+import {
+	fileFeedbackTarget,
+	filterFeedbackForChapter,
+	lineFeedbackTarget,
+} from "@/lib/feedback-targets";
 import { filterFilesForChapter } from "@/lib/filter-files-for-chapter";
 import { formatChapterAsMarkdown } from "@/lib/format-chapter-markdown";
 import { KEYBOARD_SHORTCUTS } from "@/lib/keyboard-shortcuts";
@@ -22,6 +31,7 @@ import {
 } from "@/lib/use-chapter-navigation-keys";
 import { useChapters } from "@/lib/use-chapters";
 import { useDiffPatch } from "@/lib/use-diff-patch";
+import { countFeedbackByPath, groupFeedbackByPath, useFeedback } from "@/lib/use-feedback";
 import { useFileCollapseState } from "@/lib/use-file-collapse-state";
 import { useFileDiffNavigation } from "@/lib/use-file-diff-navigation";
 import { useViewState } from "@/lib/use-view-state";
@@ -76,7 +86,9 @@ function ChapterDetailContent({
 }: ChapterDetailContentProps) {
 	const { runId, chapters: allChapters } = useChapterContext();
 	const view = useViewState(runId);
+	const feedback = useFeedback(runId);
 	const [focusedKeyChangeId, setFocusedKeyChangeId] = useState<string | null>(null);
+	const [composerState, setComposerState] = useState<FeedbackComposerState | null>(null);
 
 	// Reset focus when the chapter changes — focus is "currently selected"
 	// state local to the page, not something that should persist across nav.
@@ -110,6 +122,18 @@ function ChapterDetailContent({
 	const chapterFiles = useMemo(() => chapterEntries.map((e) => e.file), [chapterEntries]);
 	const chapterFilePaths = useMemo(() => chapterFiles.map((f) => f.path), [chapterFiles]);
 	const chapterFilePathSet = useMemo(() => new Set(chapterFilePaths), [chapterFilePaths]);
+	const chapterFeedbackComments = useMemo(
+		() => filterFeedbackForChapter(feedback.comments, chapter.id),
+		[feedback.comments, chapter.id],
+	);
+	const feedbackCommentsByPath = useMemo(
+		() => groupFeedbackByPath(chapterFeedbackComments),
+		[chapterFeedbackComments],
+	);
+	const feedbackCountsByPath = useMemo(
+		() => countFeedbackByPath(chapterFeedbackComments),
+		[chapterFeedbackComments],
+	);
 
 	const navigate = useNavigate();
 
@@ -283,6 +307,55 @@ function ChapterDetailContent({
 		void navigator.clipboard.writeText(markdown);
 	}, [chapter, chapterEntries]);
 
+	const handleCreateFileFeedback = useCallback(
+		(filePath: string) => {
+			setComposerState({ mode: "create", target: fileFeedbackTarget(filePath, chapter.id) });
+		},
+		[chapter.id],
+	);
+
+	const handleCreateLineFeedback = useCallback(
+		(filePath: string, lineRange: SelectedLineRange) => {
+			setComposerState({
+				mode: "create",
+				target: lineFeedbackTarget(filePath, lineRange, chapter.id),
+			});
+		},
+		[chapter.id],
+	);
+
+	const handleEditFeedback = useCallback((comment: FeedbackComment) => {
+		setComposerState({ mode: "edit", comment });
+	}, []);
+
+	const handleDeleteFeedback = useCallback(
+		async (comment: FeedbackComment) => {
+			try {
+				await feedback.deleteComment(comment.id);
+			} catch (err) {
+				toast.error(err instanceof Error ? err.message : "Failed to delete feedback");
+			}
+		},
+		[feedback],
+	);
+
+	const handleSubmitComposer = useCallback(
+		async (body: string) => {
+			if (!composerState) return;
+			try {
+				if (composerState.mode === "create") {
+					await feedback.createComment({ target: composerState.target, body });
+				} else {
+					await feedback.updateComment(composerState.comment.id, { body });
+				}
+			} catch (err) {
+				toast.error(err instanceof Error ? err.message : "Failed to save feedback");
+				throw err;
+			}
+		},
+		[composerState, feedback],
+	);
+
 	const chapterOverlay = useMemo<ChapterOverlayProps>(
 		() => ({
 			allLineRefsByFile,
@@ -315,6 +388,7 @@ function ChapterDetailContent({
 					viewedChapterIds={view.chapterIdSet}
 					checkedKeyChangeIds={view.keyChangeIdSet}
 					viewedFilePathSet={view.filePathSet}
+					feedbackCountsByPath={feedbackCountsByPath}
 					focusedKeyChangeId={focusedKeyChangeId}
 					onToggleChapterViewed={handleToggleChapterViewed}
 					onToggleKeyChangeChecked={handleToggleKeyChangeChecked}
@@ -335,6 +409,19 @@ function ChapterDetailContent({
 				collapseState={collapseState}
 				chapterOverlay={chapterOverlay}
 				focusedFilePath={keyboardFocusedFilePath}
+				feedback={{
+					commentsByPath: feedbackCommentsByPath,
+					onCreateFileFeedback: handleCreateFileFeedback,
+					onCreateLineFeedback: handleCreateLineFeedback,
+					onEditFeedback: handleEditFeedback,
+					onDeleteFeedback: handleDeleteFeedback,
+				}}
+			/>
+			<FeedbackComposerDialog
+				state={composerState}
+				isSaving={feedback.isCreating || feedback.isUpdating}
+				onSubmit={handleSubmitComposer}
+				onClose={() => setComposerState(null)}
 			/>
 		</SidebarLayout>
 	);

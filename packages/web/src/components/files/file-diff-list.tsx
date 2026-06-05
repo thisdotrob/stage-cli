@@ -1,8 +1,11 @@
+import type { SelectedLineRange } from "@pierre/diffs";
+import type { FeedbackComment } from "@stagereview/types/feedback";
 import { FileCode } from "lucide-react";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { FileHeader } from "@/components/chapter/file-header";
 import { PierreDiffViewer } from "@/components/chapter/pierre-diff-viewer";
 import { findRenderedDiffLine } from "@/components/chapter/rendered-line-target";
+import { FeedbackCommentList } from "@/components/feedback";
 import type { AnnotatedLineRef, DiffSide, LineRef } from "@/lib/diff-types";
 import type { FileDiffEntry } from "@/lib/parse-diff";
 import { cn } from "@/lib/utils";
@@ -35,6 +38,14 @@ export interface ChapterOverlayProps {
 	onFocusKeyChange: (keyChangeId: string | null, scrollTarget?: LineRef | null) => void;
 }
 
+export interface FeedbackConfig {
+	commentsByPath: Map<string, FeedbackComment[]>;
+	onCreateFileFeedback: (filePath: string) => void;
+	onCreateLineFeedback: (filePath: string, lineRange: SelectedLineRange) => void;
+	onEditFeedback: (comment: FeedbackComment) => void;
+	onDeleteFeedback: (comment: FeedbackComment) => void;
+}
+
 interface FileDiffListProps {
 	entries: FileDiffEntry[];
 	emptyMessage: string;
@@ -42,6 +53,7 @@ interface FileDiffListProps {
 	onToggleViewed?: (path: string) => void;
 	collapseState: CollapseState;
 	chapterOverlay?: ChapterOverlayProps;
+	feedback?: FeedbackConfig;
 	/** The keyboard-focused file, outlined to mark it as the active diff. */
 	focusedFilePath?: string;
 }
@@ -58,6 +70,7 @@ export const FileDiffList = forwardRef<FileDiffListHandle, FileDiffListProps>(fu
 		onToggleViewed,
 		collapseState,
 		chapterOverlay,
+		feedback,
 		focusedFilePath,
 	},
 	ref,
@@ -212,6 +225,7 @@ export const FileDiffList = forwardRef<FileDiffListHandle, FileDiffListProps>(fu
 					onToggleViewed={onToggleViewed}
 					collapseState={collapseState}
 					chapterOverlay={chapterOverlay}
+					feedback={feedback}
 				/>
 			))}
 		</div>
@@ -225,6 +239,7 @@ interface FileDiffSectionProps {
 	onToggleViewed?: (path: string) => void;
 	collapseState: CollapseState;
 	chapterOverlay?: ChapterOverlayProps;
+	feedback?: FeedbackConfig;
 }
 
 function FileDiffSection({
@@ -234,10 +249,14 @@ function FileDiffSection({
 	onToggleViewed,
 	collapseState,
 	chapterOverlay,
+	feedback,
 }: FileDiffSectionProps) {
 	const { file, diff } = entry;
 	const isCollapsed = collapseState.collapsedFiles.has(file.path);
 	const [isExpanded, setIsExpanded] = useState(false);
+	const feedbackComments = feedback?.commentsByPath.get(file.path) ?? [];
+	const fileFeedbackComments = feedbackComments.filter((comment) => comment.target.type === "file");
+	const lineFeedbackComments = feedbackComments.filter((comment) => comment.target.type === "line");
 
 	const handleToggle = useCallback(
 		() => collapseState.toggleFileCollapsed(file.path),
@@ -266,22 +285,44 @@ function FileDiffSection({
 				onToggle={handleToggle}
 				onToggleAll={handleToggleAll}
 				onToggleExpand={handleToggleExpand}
+				onComment={feedback ? () => feedback.onCreateFileFeedback(file.path) : undefined}
 				onToggleViewed={onToggleViewed ? handleToggleViewed : undefined}
 			/>
 			{!isCollapsed && (
-				<PierreDiffViewer
-					fileDiff={diff}
-					filePath={file.path}
-					expandUnchanged={isExpanded}
-					allLineRefsByFile={chapterOverlay?.allLineRefsByFile}
-					focusedLineRefsByFile={chapterOverlay?.focusedLineRefsByFile}
-					focusedKeyChangeId={chapterOverlay?.focusedKeyChangeId ?? null}
-					isKeyChangeChecked={chapterOverlay?.isKeyChangeChecked}
-					onMarkKeyChangeChecked={chapterOverlay?.onMarkKeyChangeChecked}
-					onUnmarkKeyChangeChecked={chapterOverlay?.onUnmarkKeyChangeChecked}
-					onFocusKeyChange={chapterOverlay?.onFocusKeyChange}
-				/>
+				<>
+					{fileFeedbackComments.length > 0 && (
+						<div className="border-x border-border bg-muted/20 px-3 py-3">
+							<FeedbackCommentList
+								comments={fileFeedbackComments}
+								onEdit={feedback?.onEditFeedback ?? noopFeedback}
+								onDelete={feedback?.onDeleteFeedback ?? noopFeedback}
+							/>
+						</div>
+					)}
+					<PierreDiffViewer
+						fileDiff={diff}
+						filePath={file.path}
+						expandUnchanged={isExpanded}
+						allLineRefsByFile={chapterOverlay?.allLineRefsByFile}
+						focusedLineRefsByFile={chapterOverlay?.focusedLineRefsByFile}
+						focusedKeyChangeId={chapterOverlay?.focusedKeyChangeId ?? null}
+						isKeyChangeChecked={chapterOverlay?.isKeyChangeChecked}
+						onMarkKeyChangeChecked={chapterOverlay?.onMarkKeyChangeChecked}
+						onUnmarkKeyChangeChecked={chapterOverlay?.onUnmarkKeyChangeChecked}
+						onFocusKeyChange={chapterOverlay?.onFocusKeyChange}
+						feedbackComments={lineFeedbackComments}
+						onCreateLineFeedback={
+							feedback
+								? (lineRange) => feedback.onCreateLineFeedback(file.path, lineRange)
+								: undefined
+						}
+						onEditFeedback={feedback?.onEditFeedback}
+						onDeleteFeedback={feedback?.onDeleteFeedback}
+					/>
+				</>
 			)}
 		</div>
 	);
 }
+
+function noopFeedback(_comment: FeedbackComment): void {}

@@ -115,8 +115,9 @@ export function diffRoutes(db: StageDb): Route[] {
 	];
 }
 
-const MINUS_RE = /^--- (?:a\/)?(.+)$/m;
-const PLUS_RE = /^\+\+\+ (?:b\/)?(.+)$/m;
+const MINUS_RE = /^--- (.+)$/m;
+const PLUS_RE = /^\+\+\+ (.+)$/m;
+const DIFF_GIT_RE = /^diff --git (.+) (.+)$/m;
 const BINARY_RE = /^Binary files/m;
 
 interface ParsedFilePaths {
@@ -138,17 +139,52 @@ function parseFilePathsFromPatch(patch: string): ParsedFilePaths[] {
 		if (!text.startsWith("diff --git ")) continue;
 
 		const isBinary = BINARY_RE.test(text);
+		const diffGit = text.match(DIFF_GIT_RE);
+		const headerOldPath = diffGit?.[1] ?? null;
+		const headerNewPath = diffGit?.[2] ?? null;
 
 		const minus = text.match(MINUS_RE);
 		const plus = text.match(PLUS_RE);
 
-		const oldPath = minus?.[1] && minus[1] !== "/dev/null" ? minus[1] : null;
-		const newPath = plus?.[1] && plus[1] !== "/dev/null" ? plus[1] : null;
+		const oldPath =
+			minus?.[1] && minus[1] !== "/dev/null"
+				? normalizePatchPath(minus[1], headerOldPath, headerNewPath)
+				: null;
+		const newPath =
+			plus?.[1] && plus[1] !== "/dev/null"
+				? normalizePatchPath(plus[1], headerNewPath, headerOldPath)
+				: null;
 
 		results.push({ oldPath, newPath, isBinary });
 	}
 
 	return results;
+}
+
+interface PrefixedPath {
+	prefix: string;
+	path: string;
+}
+
+function splitDiffPrefix(value: string): PrefixedPath | null {
+	const slash = value.indexOf("/");
+	if (slash <= 0) return null;
+	const prefix = value.slice(0, slash);
+	if (!/^(a|b|c|i|w|o|[12]|u)$/.test(prefix)) return null;
+	return { prefix, path: value.slice(slash + 1) };
+}
+
+function normalizePatchPath(
+	value: string,
+	matchingHeaderPath: string | null,
+	otherHeaderPath: string | null,
+): string {
+	if (value !== matchingHeaderPath) return value;
+	const matching = splitDiffPrefix(matchingHeaderPath);
+	const other = otherHeaderPath ? splitDiffPrefix(otherHeaderPath) : null;
+	if (!matching || !other) return value;
+	if (matching.prefix === other.prefix) return value;
+	return matching.path;
 }
 
 async function getGitFileContent(

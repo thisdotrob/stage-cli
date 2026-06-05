@@ -1,17 +1,20 @@
-import { useCallback, useMemo } from "react";
+import type { SelectedLineRange } from "@pierre/diffs";
+import type { FeedbackComment } from "@stagereview/types/feedback";
+import { useCallback, useMemo, useState } from "react";
+import { FeedbackComposerDialog, type FeedbackComposerState } from "@/components/feedback";
 import { FileDiffList, FilePicker, SidebarLayout, type ViewedConfig } from "@/components/files";
 import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "@/components/ui/sonner";
 import { useProvideCollapseActions } from "@/lib/collapse-actions-context";
 import { FILE_STATUS, FILE_VIEWED_STATE } from "@/lib/diff-types";
+import { fileFeedbackTarget, lineFeedbackTarget } from "@/lib/feedback-targets";
 import { buildFileTree, flattenFileTree, sortFileTree } from "@/lib/file-tree";
 import { type FileDiffEntry, useFileDiffEntries } from "@/lib/parse-diff";
 import { useDiffPatch } from "@/lib/use-diff-patch";
+import { countFeedbackByPath, groupFeedbackByPath, useFeedback } from "@/lib/use-feedback";
 import { useFileCollapseState } from "@/lib/use-file-collapse-state";
 import { useFileDiffNavigation } from "@/lib/use-file-diff-navigation";
 import { useViewState } from "@/lib/use-view-state";
-
-// The CLI has no review comments, so the file tree never renders comment badges.
-const NO_COMMENT_COUNTS: Map<string, number> = new Map();
 
 interface FilesPageProps {
 	runId: string;
@@ -23,6 +26,16 @@ export function FilesPage({ runId }: FilesPageProps) {
 	const rawEntries = useFileDiffEntries(diffData?.patch, diffData?.fileContents);
 	const entries = useMemo(() => sortFileDiffEntries(rawEntries), [rawEntries]);
 	const files = useMemo(() => entries.map((e) => e.file), [entries]);
+	const feedback = useFeedback(runId);
+	const [composerState, setComposerState] = useState<FeedbackComposerState | null>(null);
+	const feedbackCommentsByPath = useMemo(
+		() => groupFeedbackByPath(feedback.comments),
+		[feedback.comments],
+	);
+	const feedbackCountsByPath = useMemo(
+		() => countFeedbackByPath(feedback.comments),
+		[feedback.comments],
+	);
 
 	const { filePathSet, markFileViewed, unmarkFileViewed } = useViewState(runId);
 	const handleToggleViewed = useCallback(
@@ -74,28 +87,73 @@ export function FilesPage({ runId }: FilesPageProps) {
 	if (error) return <FilesPageError error={error} />;
 	if (isLoading || diffData === undefined) return <FilesPageSkeleton />;
 
-	return (
-		<SidebarLayout
-			sidebar={
-				<FilePicker
-					files={files}
-					focusedFilePath={currentFilePath}
-					viewed={viewed}
-					commentCountsByPath={NO_COMMENT_COUNTS}
-					onSelectFile={handleSelectFile}
-				/>
+	const handleCreateFileFeedback = (filePath: string) => {
+		setComposerState({ mode: "create", target: fileFeedbackTarget(filePath) });
+	};
+	const handleCreateLineFeedback = (filePath: string, lineRange: SelectedLineRange) => {
+		setComposerState({ mode: "create", target: lineFeedbackTarget(filePath, lineRange) });
+	};
+	const handleEditFeedback = (comment: FeedbackComment) => {
+		setComposerState({ mode: "edit", comment });
+	};
+	const handleDeleteFeedback = async (comment: FeedbackComment) => {
+		try {
+			await feedback.deleteComment(comment.id);
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : "Failed to delete feedback");
+		}
+	};
+	const handleSubmitComposer = async (body: string) => {
+		if (!composerState) return;
+		try {
+			if (composerState.mode === "create") {
+				await feedback.createComment({ target: composerState.target, body });
+			} else {
+				await feedback.updateComment(composerState.comment.id, { body });
 			}
-		>
-			<FileDiffList
-				ref={diffListRef}
-				entries={entries}
-				emptyMessage="No files changed in this run."
-				viewedPathSet={filePathSet}
-				onToggleViewed={handleToggleViewed}
-				collapseState={collapseState}
-				focusedFilePath={keyboardFocusedFilePath}
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : "Failed to save feedback");
+			throw err;
+		}
+	};
+
+	return (
+		<>
+			<SidebarLayout
+				sidebar={
+					<FilePicker
+						files={files}
+						focusedFilePath={currentFilePath}
+						viewed={viewed}
+						commentCountsByPath={feedbackCountsByPath}
+						onSelectFile={handleSelectFile}
+					/>
+				}
+			>
+				<FileDiffList
+					ref={diffListRef}
+					entries={entries}
+					emptyMessage="No files changed in this run."
+					viewedPathSet={filePathSet}
+					onToggleViewed={handleToggleViewed}
+					collapseState={collapseState}
+					focusedFilePath={keyboardFocusedFilePath}
+					feedback={{
+						commentsByPath: feedbackCommentsByPath,
+						onCreateFileFeedback: handleCreateFileFeedback,
+						onCreateLineFeedback: handleCreateLineFeedback,
+						onEditFeedback: handleEditFeedback,
+						onDeleteFeedback: handleDeleteFeedback,
+					}}
+				/>
+			</SidebarLayout>
+			<FeedbackComposerDialog
+				state={composerState}
+				isSaving={feedback.isCreating || feedback.isUpdating}
+				onSubmit={handleSubmitComposer}
+				onClose={() => setComposerState(null)}
 			/>
-		</SidebarLayout>
+		</>
 	);
 }
 

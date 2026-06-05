@@ -22,6 +22,7 @@ interface ChapterSidePanelProps {
 	viewedChapterIds: ReadonlySet<string>;
 	checkedKeyChangeIds: ReadonlySet<string>;
 	viewedFilePathSet: ReadonlySet<string>;
+	feedbackCountsByPath: Map<string, number>;
 	focusedKeyChangeId: string | null;
 	onToggleChapterViewed: (externalId: string) => void;
 	onToggleKeyChangeChecked: (keyChangeId: string) => void;
@@ -39,6 +40,7 @@ export function ChapterSidePanel({
 	viewedChapterIds,
 	checkedKeyChangeIds,
 	viewedFilePathSet,
+	feedbackCountsByPath,
 	focusedKeyChangeId,
 	onToggleChapterViewed,
 	onToggleKeyChangeChecked,
@@ -102,6 +104,7 @@ export function ChapterSidePanel({
 						files={files}
 						focusedFilePath={focusedFilePath}
 						viewedPathSet={viewedFilePathSet}
+						commentCountsByPath={feedbackCountsByPath}
 						onToggleFileViewed={onToggleFileViewed}
 						onSelectFile={onSelectFile}
 					/>
