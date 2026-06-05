@@ -1,6 +1,5 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import open from "open";
 import { buildOtherChangesChapter } from "./build-other-changes.js";
 import { closeDb, getDb } from "./db/client.js";
 import { parseGitDiff } from "./diff-parser.js";
@@ -58,15 +57,9 @@ export async function show(
 	const { port } = handle;
 	const url = `http://${LOOPBACK_HOST}:${port}/runs/${encodeURIComponent(runId)}`;
 
-	process.stdout.write(`Listening on ${url}\n`);
+	process.stdout.write(`Review URL: ${url}\n`);
 	process.stdout.write(`Feedback file: ${feedbackSink.feedbackFilePath}\n`);
 	process.stdout.write("Press Ctrl+C to exit.\n");
-
-	try {
-		await open(url);
-	} catch {
-		// URL is on stdout — user can navigate manually.
-	}
 
 	await waitForShutdownOrFeedback(feedbackSubmitted);
 
