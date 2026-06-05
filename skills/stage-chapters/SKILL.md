@@ -1,12 +1,12 @@
 ---
 name: stage-chapters
-description: Generate Stage chapters for the current local git branch and open them in a browser for review.
+description: Generate Stage chapters for the current local git branch and serve them at a review URL.
 user-invocable: true
 ---
 
 # stage-chapters
 
-Generates a Stage chapter run for the current local git branch and opens it in a browser. Uses `stagereview prep` to compute the diff, then generates chapters and a prologue, and hands the result to `stagereview show` to launch the SPA.
+Generates a Stage chapter run for the current local git branch and serves it at a browser review URL. Uses `stagereview prep` to compute the diff, then generates chapters and a prologue, and hands the result to `stagereview show` to launch the SPA.
 
 ## Prerequisites
 
@@ -312,6 +312,14 @@ Hand the file to `stagereview`:
 stagereview show "$AGENT_OUTPUT"
 ```
 
-`stagereview show` auto-detects the agent output format, independently computes the scope and "Other changes" chapter for filtered files, validates the JSON, inserts the run into the local SQLite database, boots a loopback HTTP server, and opens the browser.
+`stagereview show` auto-detects the agent output format, independently computes the scope and "Other changes" chapter for filtered files, validates the JSON, inserts the run into the local SQLite database, boots a loopback HTTP server, and prints a review URL. Relay that URL to the user so they can open it when ready.
 
-**The command blocks until the user presses Ctrl+C.** If your harness requires non-blocking execution, run it in the background (e.g., `run_in_background` in Claude Code). Invoke it as the final command in the workflow.
+The browser UI lets the user leave draft feedback comments on files and diff lines. The comments are not delivered to you until the user presses **Submit feedback**.
+
+**The command blocks until the user submits feedback or presses Ctrl+C.** If feedback is submitted, `stagereview show` writes a line to stdout:
+
+```text
+STAGE_FEEDBACK_SUBMITTED {"id":"...","runId":"...","submittedAt":"...","comments":[...]}
+```
+
+It also appends the same JSON object to the feedback file path printed near startup. After receiving `STAGE_FEEDBACK_SUBMITTED`, treat the submitted comments as the next user request: inspect the referenced files/lines, make the requested code changes, and verify them normally. If the user exits with Ctrl+C instead, stop without making follow-up changes.

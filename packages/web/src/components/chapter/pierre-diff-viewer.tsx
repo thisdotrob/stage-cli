@@ -1,11 +1,14 @@
 import {
+	type DiffLineAnnotation,
 	type FileDiffMetadata,
 	getSingularPatch,
 	type Hunk,
 	type SelectedLineRange,
 } from "@pierre/diffs";
 import { FileDiff, PatchDiff } from "@pierre/diffs/react";
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import type { FeedbackComment } from "@stagereview/types/feedback";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { FeedbackCommentCard } from "@/components/feedback";
 import {
 	type AnnotatedLineRef,
 	COMMENT_SIDE,
@@ -13,6 +16,7 @@ import {
 	type LineRef,
 	SIDE_TO_DIFF,
 } from "@/lib/diff-types";
+import { feedbackLineRangeForGutterClick } from "@/lib/feedback-targets";
 import { resolveSyntaxTheme } from "@/lib/syntax-themes";
 import { useDiffSettings } from "@/lib/use-diff-settings";
 import { LineHighlightOverlay } from "./hunk-highlight-overlay";
@@ -93,6 +97,10 @@ type PierreDiffViewerProps = {
 	onMarkKeyChangeChecked?: (keyChangeId: string) => void;
 	onUnmarkKeyChangeChecked?: (keyChangeId: string) => void;
 	onFocusKeyChange?: (keyChangeId: string | null, scrollTarget?: LineRef | null) => void;
+	feedbackComments?: FeedbackComment[];
+	onCreateLineFeedback?: (lineRange: SelectedLineRange) => void;
+	onEditFeedback?: (comment: FeedbackComment) => void;
+	onDeleteFeedback?: (comment: FeedbackComment) => void;
 	/** Force a specific theme. Defaults to detecting `.dark` on `<html>`. */
 	appTheme?: AppTheme;
 } & ({ patch: string; fileDiff?: never } | { patch?: never; fileDiff: FileDiffMetadata });
@@ -113,6 +121,10 @@ export function PierreDiffViewer({
 	onMarkKeyChangeChecked,
 	onUnmarkKeyChangeChecked,
 	onFocusKeyChange,
+	feedbackComments = [],
+	onCreateLineFeedback,
+	onEditFeedback,
+	onDeleteFeedback,
 	appTheme: appThemeProp,
 }: PierreDiffViewerProps) {
 	const appTheme = useAppTheme(appThemeProp);
@@ -131,6 +143,7 @@ export function PierreDiffViewer({
 	const deferredExpandUnchanged = useDeferredValue(expandUnchanged);
 
 	const diffContainerRef = useRef<HTMLDivElement>(null);
+	const selectedFeedbackRangeRef = useRef<SelectedLineRange | null>(null);
 
 	const focusedLineRefs = useMemo(() => {
 		if (!focusedLineRefsByFile || !filePath) return undefined;
@@ -141,6 +154,19 @@ export function PierreDiffViewer({
 		if (!allLineRefsByFile || !filePath) return undefined;
 		return allLineRefsByFile.get(filePath);
 	}, [allLineRefsByFile, filePath]);
+
+	const handleLineSelected = useCallback((lineRange: SelectedLineRange | null) => {
+		selectedFeedbackRangeRef.current = lineRange;
+	}, []);
+
+	const handleGutterUtilityClick = useCallback(
+		(lineRange: SelectedLineRange) => {
+			onCreateLineFeedback?.(
+				feedbackLineRangeForGutterClick(lineRange, selectedFeedbackRangeRef.current),
+			);
+		},
+		[onCreateLineFeedback],
+	);
 
 	const options = useMemo(
 		() => ({
@@ -156,7 +182,10 @@ export function PierreDiffViewer({
 			expansionLineCount: 20,
 			overflow: deferredWrap ? ("wrap" as const) : ("scroll" as const),
 			enableLineSelection: true,
-			enableHoverUtility: false,
+			enableGutterUtility: onCreateLineFeedback !== undefined,
+			lineHoverHighlight: onCreateLineFeedback ? ("number" as const) : ("disabled" as const),
+			onLineSelected: handleLineSelected,
+			onGutterUtilityClick: onCreateLineFeedback ? handleGutterUtilityClick : undefined,
 		}),
 		[
 			appTheme,
@@ -168,12 +197,49 @@ export function PierreDiffViewer({
 			deferredWrap,
 			deferredLineNumbers,
 			deferredExpandUnchanged,
+			onCreateLineFeedback,
+			handleLineSelected,
+			handleGutterUtilityClick,
 		],
 	);
 
 	const sharedProps = {
 		options,
 		selectedLines: selectedLinesProp ?? null,
+	};
+
+	const feedbackLineAnnotations = useMemo<DiffLineAnnotation<FeedbackComment>[]>(
+		() =>
+			feedbackComments.flatMap((comment) => {
+				if (comment.target.type !== "line") return [];
+				return [
+					{
+						side: comment.target.range.endSide ?? comment.target.range.side,
+						lineNumber: comment.target.range.endLine,
+						metadata: comment,
+					},
+				];
+			}),
+		[feedbackComments],
+	);
+
+	const renderFeedbackAnnotation = useCallback(
+		(annotation: DiffLineAnnotation<FeedbackComment>) => (
+			<div className="py-1 pr-2">
+				<FeedbackCommentCard
+					comment={annotation.metadata}
+					onEdit={onEditFeedback ?? noopFeedback}
+					onDelete={onDeleteFeedback ?? noopFeedback}
+					compact
+				/>
+			</div>
+		),
+		[onEditFeedback, onDeleteFeedback],
+	);
+
+	const feedbackProps = {
+		lineAnnotations: feedbackLineAnnotations,
+		renderAnnotation: renderFeedbackAnnotation,
 	};
 
 	// Only mount the overlay when this file actually has refs to highlight.
@@ -200,7 +266,7 @@ export function PierreDiffViewer({
 				className="@container/diff relative isolate overflow-hidden rounded-b-lg border-x border-b border-border"
 				ref={diffContainerRef}
 			>
-				<FileDiff fileDiff={fileDiff} {...sharedProps} />
+				<FileDiff fileDiff={fileDiff} {...sharedProps} {...feedbackProps} />
 				{overlay}
 			</div>
 		);
@@ -211,11 +277,13 @@ export function PierreDiffViewer({
 			className="@container/diff relative isolate overflow-hidden rounded-b-lg border-x border-b border-border"
 			ref={diffContainerRef}
 		>
-			<PatchDiff patch={patch} {...sharedProps} />
+			<PatchDiff patch={patch} {...sharedProps} {...feedbackProps} />
 			{overlay}
 		</div>
 	);
 }
+
+function noopFeedback(_comment: FeedbackComment): void {}
 
 /**
  * Re-exported helper for chapter container components: derive the addition-side

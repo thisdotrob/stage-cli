@@ -52,7 +52,9 @@ In your AI agent, run:
 /stage-chapters
 ```
 
-This organizes your local changes into reviewable chapters and opens a browser UI. Everything happens on your machine.
+This organizes your local changes into reviewable chapters and prints a local review URL for you to open when ready. Everything happens on your machine.
+
+You can leave draft feedback comments on files and diff lines in the browser UI. The agent receives them only after you press **Submit feedback**.
 
 ### Options
 

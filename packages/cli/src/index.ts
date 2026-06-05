@@ -50,7 +50,7 @@ program
 
 program
 	.command("show")
-	.description("Load a chapters.json file and open it in a local browser")
+	.description("Load a chapters.json file and serve it at a local review URL")
 	.argument("<path>", "Path to a chapters.json file")
 	.argument("[refs...]", "Git refs to diff, for example: main, main feature, or main..feature")
 	.option("--base <ref>", "Base ref to diff against (default: auto-detect main/master)")

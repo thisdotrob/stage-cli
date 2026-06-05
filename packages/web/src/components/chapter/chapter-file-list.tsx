@@ -3,13 +3,11 @@ import { FileFilterInput } from "@/components/files/file-filter-input";
 import { FileTree, type ViewedConfig } from "@/components/files/file-tree";
 import { FILE_VIEWED_STATE, type PullRequestFile } from "@/lib/diff-types";
 
-// The CLI has no review comments, so the tree never renders comment badges.
-const NO_COMMENT_COUNTS: Map<string, number> = new Map();
-
 interface ChapterFileListProps {
 	files: PullRequestFile[];
 	focusedFilePath?: string;
 	viewedPathSet: ReadonlySet<string>;
+	commentCountsByPath: Map<string, number>;
 	onToggleFileViewed: (filePath: string) => void;
 	onSelectFile: (filePath: string) => void;
 }
@@ -18,6 +16,7 @@ export function ChapterFileList({
 	files,
 	focusedFilePath,
 	viewedPathSet,
+	commentCountsByPath,
 	onToggleFileViewed,
 	onSelectFile,
 }: ChapterFileListProps) {
@@ -47,7 +46,7 @@ export function ChapterFileList({
 				focusedFilePath={focusedFilePath}
 				onSelectFile={onSelectFile}
 				viewed={viewed}
-				commentCountsByPath={NO_COMMENT_COUNTS}
+				commentCountsByPath={commentCountsByPath}
 				filter={filter}
 			/>
 		</div>

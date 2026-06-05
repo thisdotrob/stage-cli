@@ -1,12 +1,13 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import open from "open";
 import { buildOtherChangesChapter } from "./build-other-changes.js";
 import { closeDb, getDb } from "./db/client.js";
 import { parseGitDiff } from "./diff-parser.js";
+import { createFeedbackSink } from "./feedback-sink.js";
 import { filterFilesForLlm, loadStageIgnore } from "./filter-files.js";
 import { type ResolveScopeOptions, readRepoContext, readRepoRoot, resolveScope } from "./git.js";
 import { diffRoutes } from "./routes/diff.js";
+import { feedbackRoutes } from "./routes/feedback.js";
 import { pullRequestRoutes } from "./routes/pull-request.js";
 import { pullRequestMutationRoutes } from "./routes/pull-request-mutations.js";
 import { runRoutes } from "./routes/runs.js";
@@ -32,13 +33,23 @@ export async function show(
 ): Promise<void> {
 	const db = getDb();
 	const chaptersFile = loadChaptersFile(jsonPath, base, workingTreeRef, refs, compare);
-	const { runId } = insertChaptersFile(db, chaptersFile, readRepoContext());
+	const repoContext = readRepoContext();
+	const { runId } = insertChaptersFile(db, chaptersFile, repoContext);
+	const feedbackSink = createFeedbackSink(repoContext.root, runId);
+	let markFeedbackSubmitted: () => void = () => {};
+	const feedbackSubmitted = new Promise<void>((resolve) => {
+		markFeedbackSubmitted = resolve;
+	});
 
 	const handle = await startServer({
 		routes: [
 			...runRoutes(db),
 			...viewStateRoutes(db),
 			...diffRoutes(db),
+			...feedbackRoutes(db, {
+				deliverSubmission: feedbackSink.deliver,
+				onSubmitted: markFeedbackSubmitted,
+			}),
 			...pullRequestRoutes(db),
 			...pullRequestMutationRoutes(db),
 		],
@@ -46,16 +57,11 @@ export async function show(
 	const { port } = handle;
 	const url = `http://${LOOPBACK_HOST}:${port}/runs/${encodeURIComponent(runId)}`;
 
-	process.stdout.write(`Listening on ${url}\n`);
+	process.stdout.write(`Review URL: ${url}\n`);
+	process.stdout.write(`Feedback file: ${feedbackSink.feedbackFilePath}\n`);
 	process.stdout.write("Press Ctrl+C to exit.\n");
 
-	try {
-		await open(url);
-	} catch {
-		// URL is on stdout — user can navigate manually.
-	}
-
-	await waitForShutdownSignal();
+	await waitForShutdownOrFeedback(feedbackSubmitted);
 
 	await handle.close();
 	closeDb();
@@ -271,15 +277,19 @@ function sanitizeLineRefs(
 	});
 }
 
-function waitForShutdownSignal(): Promise<void> {
+function waitForShutdownOrFeedback(feedbackSubmitted: Promise<void>): Promise<void> {
 	return new Promise<void>((resolve) => {
-		const cleanup = () => {
-			process.removeListener("SIGINT", cleanup);
-			process.removeListener("SIGTERM", cleanup);
+		let settled = false;
+		const finish = () => {
+			if (settled) return;
+			settled = true;
+			process.removeListener("SIGINT", finish);
+			process.removeListener("SIGTERM", finish);
 			resolve();
 		};
 
-		process.once("SIGINT", cleanup);
-		process.once("SIGTERM", cleanup);
+		process.once("SIGINT", finish);
+		process.once("SIGTERM", finish);
+		feedbackSubmitted.then(finish, finish);
 	});
 }

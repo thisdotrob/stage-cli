@@ -1,5 +1,13 @@
 import { Link, Outlet, useRouterState } from "@tanstack/react-router";
-import { BookOpen, FileText, FoldVertical, Settings2, UnfoldVertical } from "lucide-react";
+import {
+	BookOpen,
+	FileText,
+	FoldVertical,
+	Loader2,
+	Send,
+	Settings2,
+	UnfoldVertical,
+} from "lucide-react";
 import { type CSSProperties, useCallback, useMemo, useRef, useState } from "react";
 import { DiffSettingsForm } from "@/components/diff/diff-settings-form";
 import { PullRequestHeader } from "@/components/pull-request/pull-request-header";
@@ -7,6 +15,7 @@ import { PullRequestHeaderSkeleton } from "@/components/pull-request/pull-reques
 import { SectionLabel } from "@/components/pull-request/section-label";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { toast } from "@/components/ui/sonner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ChapterProvider } from "@/lib/chapter-context";
 import { CollapseActionsProvider, useCollapseActionsFromNav } from "@/lib/collapse-actions-context";
@@ -14,6 +23,7 @@ import { useFileDiffEntries } from "@/lib/parse-diff";
 import { PullRequestProvider } from "@/lib/pull-request-context";
 import { useChapters } from "@/lib/use-chapters";
 import { useDiffPatch } from "@/lib/use-diff-patch";
+import { useFeedback } from "@/lib/use-feedback";
 import { usePullRequest, usePullRequestMergeStatus } from "@/lib/use-pull-request";
 import { countViewedChapters, useViewStateData } from "@/lib/use-view-state";
 import { cn } from "@/lib/utils";
@@ -116,6 +126,11 @@ function ErrorState({ error }: { error: unknown }) {
 
 export function PullRequestLayout({ runId }: { runId: string }) {
 	const { data, error } = useChapters(runId);
+	const {
+		draftCount: feedbackDraftCount,
+		isSubmitting: isSubmittingFeedback,
+		submitFeedback,
+	} = useFeedback(runId);
 	const { data: prData, isLoading: isPrLoading } = usePullRequest(runId);
 	const pullRequest = prData?.pullRequest ?? null;
 	const isPrOpen =
@@ -222,6 +237,15 @@ export function PullRequestLayout({ runId }: { runId: string }) {
 		return { totalAdditions: additions, totalDeletions: deletions };
 	}, [fileEntries]);
 
+	const handleSubmitFeedback = useCallback(async () => {
+		try {
+			await submitFeedback();
+			toast.success("Feedback submitted to the agent");
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : "Failed to submit feedback");
+		}
+	}, [submitFeedback]);
+
 	if (error) return <ErrorState error={error} />;
 
 	return (
@@ -278,6 +302,35 @@ export function PullRequestLayout({ runId }: { runId: string }) {
 						))}
 					</div>
 					<div className="flex shrink-0 items-center gap-3 text-sm @xl:gap-6">
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<Button
+									variant={feedbackDraftCount > 0 ? "default" : "outline"}
+									size="sm"
+									className="h-7 cursor-pointer px-2"
+									aria-label="Submit feedback to agent"
+									disabled={feedbackDraftCount === 0 || isSubmittingFeedback}
+									onClick={handleSubmitFeedback}
+								>
+									{isSubmittingFeedback ? (
+										<Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+									) : (
+										<Send className="size-3.5" aria-hidden="true" />
+									)}
+									<span className="ml-1 hidden text-xs @7xl:inline">Submit feedback</span>
+									{feedbackDraftCount > 0 && (
+										<span className="ml-0.5 rounded-md bg-background/20 px-1 text-[10px] tabular-nums">
+											{feedbackDraftCount}
+										</span>
+									)}
+								</Button>
+							</TooltipTrigger>
+							<TooltipContent>
+								{feedbackDraftCount === 0
+									? "Add feedback before submitting"
+									: "Submit feedback to the agent"}
+							</TooltipContent>
+						</Tooltip>
 						<CollapseExpandAllButton />
 						<Popover>
 							<Tooltip>
