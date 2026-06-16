@@ -28,19 +28,13 @@
 ## Install
 
 ```bash
-npm install -g stagereview
-```
-
-Then add the skill to your agent:
-
-```bash
-npx skills add ReviewStage/stage-cli
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/thisdotrob/stage-cli/main/install.sh)"
 ```
 
 ## Uninstall
 
 ```bash
-npx skills remove ReviewStage/stage-cli
+npx skills remove thisdotrob/stage-cli
 npm uninstall -g stagereview
 ```
 
