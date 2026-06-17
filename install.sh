@@ -73,7 +73,7 @@ source_dir="$(find "$source_parent" -mindepth 1 -maxdepth 1 -type d -print -quit
 
 if command -v corepack >/dev/null 2>&1 && corepack pnpm --version >/dev/null 2>&1; then
 	pnpm_command=(corepack pnpm)
-elif command -v pnpm >/dev/null 2>&1 && pnpm --version >/dev/null 2>&1; then
+elif command -v pnpm >/dev/null 2>&1; then
 	pnpm_command=(pnpm)
 else
 	die "Missing pnpm. Install pnpm or enable Corepack, then rerun this installer."
