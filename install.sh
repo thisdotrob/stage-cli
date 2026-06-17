@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Non-interactive bash doesn't source shell profiles, so tool managers (mise, asdf, volta)
+# won't have added their shim dirs to PATH. Prepend the common ones so we find pnpm etc.
+export PATH="$HOME/.local/share/mise/shims:$HOME/.asdf/shims:$HOME/.volta/bin:$PATH"
+
 readonly SOURCE_REPO="thisdotrob/stage-cli"
 readonly SOURCE_REF="main"
 readonly TARBALL_URL="https://codeload.github.com/thisdotrob/stage-cli/tar.gz/main"
