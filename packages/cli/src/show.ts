@@ -59,7 +59,6 @@ export async function show(
 
 	process.stdout.write(`Review URL: ${url}\n`);
 	process.stdout.write(`Feedback file: ${feedbackSink.feedbackFilePath}\n`);
-	process.stdout.write("Press Ctrl+C to exit.\n");
 
 	await waitForShutdownOrFeedback(feedbackSubmitted);
 

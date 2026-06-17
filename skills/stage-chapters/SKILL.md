@@ -12,17 +12,17 @@ Generates a Stage chapter run for the current local git branch and serves it at 
 
 Run these checks before any other work. If either fails, stop with the error message — do not continue.
 
-1. **`stagereview` is installed.** Run `which stagereview`. If it exits non-zero, instruct the user:
+1. **`stagereview` is installed and working.** Run `stagereview --version 2>&1`. If it exits non-zero, instruct the user:
 
    ```
-   stagereview is not installed. Run:
+   stagereview is not installed (or not available under the current Node.js version). Run:
 
        npm install -g stagereview
 
    Then retry /stage-chapters.
    ```
 
-   Stop.
+   Stop. (A non-zero exit can mean the binary is missing entirely, or that it exists as a mise/asdf shim but wasn't installed under the currently active Node.js version — `npm install -g stagereview` fixes both cases.)
 
 2. **The current directory is a git repo.** Run `git rev-parse --is-inside-work-tree`. If it does not print `true`, stop with:
 
@@ -306,20 +306,24 @@ Field rules:
 
 ## Step 6 — Display generated chapters
 
-Hand the file to `stagereview`:
+Run `stagereview show` **in the background** — it blocks until the user submits feedback, so the agent must not wait synchronously:
 
 ```bash
 stagereview show "$AGENT_OUTPUT"
 ```
 
-`stagereview show` auto-detects the agent output format, independently computes the scope and "Other changes" chapter for filtered files, validates the JSON, inserts the run into the local SQLite database, boots a loopback HTTP server, and prints a review URL. Relay that URL to the user so they can open it when ready.
+Use `run_in_background: true` when launching this command. Immediately after, call `TaskOutput` with `block: false` to read the initial output. Parse the `Review URL:` line and relay **only that URL** to the user — do not forward other output lines:
 
-The browser UI lets the user leave draft feedback comments on files and diff lines. The comments are not delivered to you until the user presses **Submit feedback**.
+```
+Review URL: http://127.0.0.1:5391/runs/<id>
+```
 
-**The command blocks until the user submits feedback or presses Ctrl+C.** If feedback is submitted, `stagereview show` writes a line to stdout:
+Then call `TaskOutput` with `block: true` to wait for the task to finish. `stagereview show` exits automatically once the user submits feedback. At that point the output will contain:
 
 ```text
 STAGE_FEEDBACK_SUBMITTED {"id":"...","runId":"...","submittedAt":"...","comments":[...]}
 ```
 
-It also appends the same JSON object to the feedback file path printed near startup. After receiving `STAGE_FEEDBACK_SUBMITTED`, treat the submitted comments as the next user request: inspect the referenced files/lines, make the requested code changes, and verify them normally. If the user exits with Ctrl+C instead, stop without making follow-up changes.
+Parse the JSON from that line and treat the submitted comments as the next user request: inspect the referenced files/lines, make the requested code changes, and verify them normally.
+
+**Cancellation:** if the user wants to exit without submitting, they should close the browser tab and tell you. Call `TaskStop` on the background task and stop without making follow-up changes. Do **not** tell the user to press Ctrl+C — in Claude Code that kills the whole session, not just the background process.
