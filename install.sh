@@ -4,7 +4,8 @@ set -euo pipefail
 # Non-interactive bash doesn't source shell profiles, so tool managers (mise, asdf, volta)
 # won't have added their shim dirs to PATH. Prepend the common ones so we find pnpm etc.
 export PATH="$HOME/.local/share/mise/shims:$HOME/.asdf/shims:$HOME/.volta/bin:$PATH"
-export MISE_YES=1  # suppress mise trust/install prompts in non-interactive context
+export MISE_YES=1         # suppress mise trust/install prompts in non-interactive context
+export NO_UPDATE_NOTIFIER=1  # suppress pnpm/npm update-notifier boxes
 
 readonly SOURCE_REPO="thisdotrob/stage-cli"
 readonly SOURCE_REF="main"
@@ -71,6 +72,12 @@ source_dir="$(find "$source_parent" -mindepth 1 -maxdepth 1 -type d -print -quit
 
 [[ -n "$source_dir" ]] || die "Downloaded archive did not contain a source directory"
 [[ -f "$source_dir/package.json" ]] || die "Downloaded source is missing package.json"
+
+# mise won't load tool config from untrusted paths; trust explicitly so it doesn't
+# print errors during pnpm install/build.
+if command -v mise >/dev/null 2>&1; then
+	mise trust "$source_dir" >/dev/null 2>&1 || true
+fi
 
 if command -v corepack >/dev/null 2>&1 && corepack pnpm --version >/dev/null 2>&1; then
 	pnpm_command=(corepack pnpm)
