@@ -104,6 +104,19 @@ cli_tarball="$(find "$pack_dir" -maxdepth 1 -name 'stagereview-*.tgz' -print -qu
 log "Installing stagereview CLI globally"
 npm install -g "$cli_tarball"
 
+# npm globals are per Node.js version. If mise manages Node.js, install under
+# every managed version so the shim resolves correctly regardless of which
+# version a project pins.
+if command -v mise >/dev/null 2>&1; then
+	mise_node_versions="$(mise ls node 2>/dev/null | awk 'NF >= 2 && $2 ~ /^[0-9]/ {print $2}' | sort -u)"
+	if [[ -n "$mise_node_versions" ]]; then
+		log "Installing stagereview under all mise-managed Node.js versions"
+		while IFS= read -r version; do
+			mise exec "node@${version}" -- npm install -g "$cli_tarball" >/dev/null 2>&1 || true
+		done <<< "$mise_node_versions"
+	fi
+fi
+
 log "Installing $SKILL_NAME skill to ~/.agents/skills"
 (
 	cd "$source_dir"

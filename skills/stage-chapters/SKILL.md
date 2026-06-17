@@ -15,14 +15,14 @@ Run these checks before any other work. If either fails, stop with the error mes
 1. **`stagereview` is installed and working.** Run `stagereview --version 2>&1`. If it exits non-zero, instruct the user:
 
    ```
-   stagereview is not installed (or not available under the current Node.js version). Install it by running:
+   stagereview is not installed. Run:
 
        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/thisdotrob/stage-cli/main/install.sh)"
 
    Then retry /stage-chapters.
    ```
 
-   Stop. (A non-zero exit can mean the binary is missing entirely, or that it exists as a mise/asdf shim but wasn't installed under the currently active Node.js version — re-running the install script fixes both cases.)
+   Stop.
 
 2. **The current directory is a git repo.** Run `git rev-parse --is-inside-work-tree`. If it does not print `true`, stop with:
 
