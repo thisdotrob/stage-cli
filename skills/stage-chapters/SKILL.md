@@ -15,14 +15,14 @@ Run these checks before any other work. If either fails, stop with the error mes
 1. **`stagereview` is installed and working.** Run `stagereview --version 2>&1`. If it exits non-zero, instruct the user:
 
    ```
-   stagereview is not installed (or not available under the current Node.js version). Run:
+   stagereview is not installed (or not available under the current Node.js version). Install it by running:
 
-       npm install -g stagereview
+       /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/thisdotrob/stage-cli/main/install.sh)"
 
    Then retry /stage-chapters.
    ```
 
-   Stop. (A non-zero exit can mean the binary is missing entirely, or that it exists as a mise/asdf shim but wasn't installed under the currently active Node.js version — `npm install -g stagereview` fixes both cases.)
+   Stop. (A non-zero exit can mean the binary is missing entirely, or that it exists as a mise/asdf shim but wasn't installed under the currently active Node.js version — re-running the install script fixes both cases.)
 
 2. **The current directory is a git repo.** Run `git rev-parse --is-inside-work-tree`. If it does not print `true`, stop with:
 
@@ -306,19 +306,19 @@ Field rules:
 
 ## Step 6 — Display generated chapters
 
-Run `stagereview show` **in the background** — it blocks until the user submits feedback, so the agent must not wait synchronously:
+Run `stagereview show` without blocking the agent — the command stays alive until the user submits feedback:
 
 ```bash
 stagereview show "$AGENT_OUTPUT"
 ```
 
-Use `run_in_background: true` when launching this command. Immediately after, call `TaskOutput` with `block: false` to read the initial output. Parse the `Review URL:` line and relay **only that URL** to the user — do not forward other output lines:
+Once running, read its stdout to find the `Review URL:` line and relay **only that URL** to the user — do not forward other output lines:
 
 ```
 Review URL: http://127.0.0.1:5391/runs/<id>
 ```
 
-Then call `TaskOutput` with `block: true` to wait for the task to finish. `stagereview show` exits automatically once the user submits feedback. At that point the output will contain:
+Wait for the process to finish. `stagereview show` exits automatically once the user submits feedback. The final stdout will contain:
 
 ```text
 STAGE_FEEDBACK_SUBMITTED {"id":"...","runId":"...","submittedAt":"...","comments":[...]}
@@ -326,4 +326,10 @@ STAGE_FEEDBACK_SUBMITTED {"id":"...","runId":"...","submittedAt":"...","comments
 
 Parse the JSON from that line and treat the submitted comments as the next user request: inspect the referenced files/lines, make the requested code changes, and verify them normally.
 
-**Cancellation:** if the user wants to exit without submitting, they should close the browser tab and tell you. Call `TaskStop` on the background task and stop without making follow-up changes. Do **not** tell the user to press Ctrl+C — in Claude Code that kills the whole session, not just the background process.
+**Cancellation:** if the user wants to exit without submitting, they should close the browser tab and tell you. Stop the `stagereview show` process and make no follow-up changes. Do **not** tell the user to press Ctrl+C — depending on the agent context this can interrupt the agent session rather than just the stagereview process.
+
+> **Claude Code — implementation details for this step:**
+> - Pass `run_in_background: true` to the Bash tool when launching `stagereview show`.
+> - Immediately after, call `TaskOutput` with `block: false` to read the initial stdout and parse the `Review URL:` line.
+> - Call `TaskOutput` with `block: true` to wait for the process to exit and capture the `STAGE_FEEDBACK_SUBMITTED` line.
+> - To cancel: call `TaskStop` on the background task.
